@@ -4,7 +4,7 @@
 # license that can be found in the LICENSE file or at
 # https://developers.google.com/open-source/licenses/bsd
 
-all: list HIDTest U2FTest
+all: libu2ftest.a
 
 UNAME := $(shell uname)
 
@@ -23,32 +23,46 @@ ifeq ($(UNAME), Darwin)
 CFLAGS=-Ihidapi/hidapi -Icore/include -D__OS_MAC
 LDFLAGS=-framework IOKit -framework CoreFoundation
 HIDAPI=hid.o
-hid.o: hidapi/mac/hid.c
+hid.o: hidapi hidapi/mac/hid.c
 	gcc -c $(CFLAGS) -o hid.o hidapi/mac/hid.c
 
 endif  # Darwin
 
+LDFLAGS += -L. -lu2ftest
+
+clean:
+	rm -rf *.o list HIDTest U2FTest hidapi core libu2ftest.a
+
 # Crypto code.
 LIBMINCRYPT=dsa_sig.o p256.o p256_ec.o p256_ecdsa.o sha256.o
 
-dsa_sig.o: core/libmincrypt/dsa_sig.c
+hidapi:
+	git clone https://github.com/signal11/hidapi
+
+core:
+	git clone -b lollipop-release https://android.googlesource.com/platform/system/core
+
+dsa_sig.o: core core/libmincrypt/dsa_sig.c
 	gcc -c $(CFLAGS) -Wall $^
 
-p256.o: core/libmincrypt/p256.c
+p256.o: core core/libmincrypt/p256.c
 	gcc -c $(CFLAGS) -Wall $^
 
-p256_ec.o: core/libmincrypt/p256_ec.c
+p256_ec.o: core core/libmincrypt/p256_ec.c
 	gcc -c $(CFLAGS) -Wall $^
 
-p256_ecdsa.o: core/libmincrypt/p256_ecdsa.c
+p256_ecdsa.o: core core/libmincrypt/p256_ecdsa.c
 	gcc -c $(CFLAGS) -Wall $^
 
-sha256.o: core/libmincrypt/sha256.c
+sha256.o: core core/libmincrypt/sha256.c
 	gcc -c $(CFLAGS) -Wall $^
 
 # utility tools.
 u2f_util.o: u2f_util.cc u2f_util.h u2f.h u2f_hid.h
 	g++ -c $(CFLAGS) -Wall -o u2f_util.o u2f_util.cc
+
+libu2ftest.a: $(LIBMINCRYPT) $(HIDAPI) u2f_util.o
+	ar -r $@ u2f_util.o $^
 
 # simple hidapi tool to list devices to see paths.
 list: list.c $(HIDAPI)
@@ -56,7 +70,7 @@ list: list.c $(HIDAPI)
 
 # Low-level HID framing test.
 HIDTest: HIDTest.cc u2f_util.o $(HIDAPI)
-	g++ $(CFLAGS) -Wall -o $@ $^ $(LDFLAGS)
+	g++ $(CFLAGS) -Wall -o $@ $@.cc  $(LDFLAGS)
 
 # U2F messaging crypto test.
 U2FTest: U2FTest.cc u2f_util.o $(HIDAPI) $(LIBMINCRYPT)
