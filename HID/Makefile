@@ -31,7 +31,10 @@ endif  # Darwin
 LDFLAGS += -L. -lu2ftest
 
 clean:
-	rm -rf *.o list HIDTest U2FTest hidapi core libu2ftest.a
+	rm -rf *.o list HIDTest U2FTest libu2ftest.a
+
+distclean: clean
+	rm -rf hidapi core
 
 # Crypto code.
 LIBMINCRYPT=dsa_sig.o p256.o p256_ec.o p256_ecdsa.o sha256.o

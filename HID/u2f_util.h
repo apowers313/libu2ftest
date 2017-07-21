@@ -97,6 +97,8 @@ int U2Fob_init(struct U2Fob* device);
 
 uint32_t U2Fob_getCid(struct U2Fob* device);
 
+U2FHID_FRAME* makeFrame(uint32_t cid, uint8_t cmd, size_t len, const void* data);
+
 int U2Fob_sendHidFrame(struct U2Fob* device, U2FHID_FRAME* out);
 
 int U2Fob_receiveHidFrame(struct U2Fob* device, U2FHID_FRAME* in,

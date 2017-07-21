@@ -96,11 +96,13 @@ float U2Fob_deltaTime(uint64_t* state) {
 
 struct U2Fob* U2Fob_create() {
   struct U2Fob* f = NULL;
+  printf("U2Fob_create\n");
   if (hid_init() == 0) {
     f = (struct U2Fob*)malloc(sizeof(struct U2Fob));
     memset(f, 0, sizeof(struct U2Fob));
     f->cid = -1;
   }
+  fprintf(stdout, "created device: %p\n", f);
   return f;
 }
 
@@ -121,6 +123,8 @@ uint32_t U2Fob_getCid(struct U2Fob* device) {
 }
 
 int U2Fob_open(struct U2Fob* device, const char* path) {
+  printf("U2Fob_open\n");
+  printf("path: \"%s\"\n", path);
   U2Fob_close(device);
   if (device->path) {
     free(device->path);
@@ -128,6 +132,7 @@ int U2Fob_open(struct U2Fob* device, const char* path) {
   }
   device->path = strdup(path);
   device->dev = hid_open_path(device->path);
+  printf ("U2Fob_open returning: %p\n", device->dev);
   return device->dev != NULL ? -ERR_NONE : -ERR_OTHER;
 }
 
@@ -154,26 +159,54 @@ void U2Fob_setLog(struct U2Fob* device, FILE* fd, int level) {
 static
 void U2Fob_logFrame(struct U2Fob* device,
                     const char* tag, const U2FHID_FRAME* f) {
+  device->logfp = stdout;
   if (device->logfp) {
-    fprintf(device->logfp, "t+%.3f", U2Fob_deltaTime(&device->logtime));
-    fprintf(device->logfp, "%s %08x:%02x", tag, f->cid, f->type);
+    fprintf(device->logfp, "Time: %.3f  ", U2Fob_deltaTime(&device->logtime));
+    fprintf(device->logfp, "CID: %08x; ", f->cid);
+    fprintf(device->logfp, "Type: %02x; ", f->type);
+    // fprintf(device->logfp, "%s %08x:%02x", tag, f->cid, f->type);
     if (f->type & TYPE_INIT) {
       int len = f->init.bcnth * 256 + f->init.bcntl;
-      fprintf(device->logfp, "[%d]:", len);
+      fprintf(device->logfp, "Len: %d\nData: ", len);
       for (size_t i = 0; i < sizeof(f->init.data); ++i)
-          fprintf(device->logfp, "%02X", f->init.data[i]);
+          fprintf(device->logfp, "%02X ", f->init.data[i]);
     } else {
-      fprintf(device->logfp, ":");
+      fprintf(device->logfp, "\nCont Data: ");
       for (size_t i = 0; i < sizeof(f->cont.data); ++i)
-          fprintf(device->logfp, "%02X", f->cont.data[i]);
+          fprintf(device->logfp, "%02X ", f->cont.data[i]);
     }
     fprintf(device->logfp, "\n");
   }
 }
 
+// Initialize a frame with |len| random payload, or data.
+U2FHID_FRAME* makeFrame(uint32_t cid, uint8_t cmd,
+               size_t len, const void* data = NULL) {
+  U2FHID_FRAME* f;
+  f = (U2FHID_FRAME *)malloc(sizeof(U2FHID_FRAME));
+  if (f == NULL) {
+    fprintf(stderr, "makeFrame: malloc error");
+    exit(-1);
+  }
+  memset(f, 0, sizeof(U2FHID_FRAME));
+  f->cid = cid;
+  f->init.cmd = cmd | TYPE_INIT;
+  f->init.bcnth = (uint8_t) (len >> 8);
+  f->init.bcntl = (uint8_t) len;
+  for (size_t i = 0; i < min(len, sizeof(f->init.data)); ++i) {
+    f->init.data[i] = data ? ((const uint8_t*)data)[i] : (rand() & 255);
+  }
+
+  return f;
+}
+
 int U2Fob_sendHidFrame(struct U2Fob* device, U2FHID_FRAME* f) {
   uint8_t d[sizeof(U2FHID_FRAME) + 1];
   int res;
+
+  printf("U2Fob_sendHidFrame\n");
+  printf("device: %p\n", device);
+  printf("frame: %p\n", f);
 
   d[0] = 0;  // un-numbered report
   f->cid = htonl(f->cid);  // cid is in network order on the wire
@@ -184,7 +217,7 @@ int U2Fob_sendHidFrame(struct U2Fob* device, U2FHID_FRAME* f) {
   res = hid_write(device->dev, d, sizeof(d));
 
   if (res == sizeof(d)) {
-    U2Fob_logFrame(device, ">", f);
+    U2Fob_logFrame(device, "SEND", f);
     return 0;
   }
 
@@ -192,17 +225,24 @@ int U2Fob_sendHidFrame(struct U2Fob* device, U2FHID_FRAME* f) {
 }
 
 int U2Fob_receiveHidFrame(struct U2Fob* device, U2FHID_FRAME* r, float to) {
+  printf("U2Fob_receiveHidFrame\n");
+  printf("device: %p\n", device);
+  printf("U2FHID_FRAME: %p\n", r);
+  printf("timeout: %f\n", to);
+
   if (to <= 0.0)
       return -ERR_MSG_TIMEOUT;
 
   if (!device->dev) return -ERR_OTHER;
   memset((int8_t*)r, 0xEE, sizeof(U2FHID_FRAME));
+  printf ("doing read\n");
   int res = hid_read_timeout(device->dev,
                              (uint8_t*) r, sizeof(U2FHID_FRAME),
                              (int) (to * 1000));
+  printf ("done reading, res: %d\n", res);
   if (res == sizeof(U2FHID_FRAME)) {
     r->cid = ntohl(r->cid);
-    U2Fob_logFrame(device, "<", r);
+    U2Fob_logFrame(device, "RECV", r);
     return 0;
   }
 
@@ -211,7 +251,7 @@ int U2Fob_receiveHidFrame(struct U2Fob* device, U2FHID_FRAME* r, float to) {
 
   if (device->logfp) {
     fprintf(device->logfp, "t+%.3f", U2Fob_deltaTime(&device->logtime));
-    fprintf(device->logfp, "< (timeout)\n");
+    fprintf(device->logfp, "RECV (timeout)\n");
   }
 
   return -ERR_MSG_TIMEOUT;
@@ -219,6 +259,9 @@ int U2Fob_receiveHidFrame(struct U2Fob* device, U2FHID_FRAME* r, float to) {
 
 int U2Fob_init(struct U2Fob* device) {
   int res;
+
+  fprintf(stdout, "U2Fob_init\n");
+  fprintf(stdout, "device: %p\n", device);
   U2FHID_FRAME challenge;
 
   for (size_t i = 0; i < sizeof(device->nonce); ++i) {
